@@ -40,11 +40,16 @@ class Model(nn.Module):
         dist = self.pi(obs)
         return Categorical(logits=dist)
 
-    def actor_dist(self, obs):
+    def chicken_nugget(self, obs, act):
         obs = self.initial_passthrough(obs)
-        dist = self.pi(obs)
-        return Categorical(logits=dist)
-    
+
+        pi_dist = self.pi(obs)
+        pi_dist = Categorical(logits=pi_dist)
+        logp = pi_dist.log_prob(act)
+        values = self.vf(obs)
+
+        return logp, values
+
     def critic(self, obs):
         return self.vf(self.initial_passthrough(obs))
 

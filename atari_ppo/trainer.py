@@ -10,8 +10,8 @@ from buffer import Buffer
 from model import Model
 
 class Trainer:
-    def __init__(self, env, timesteps_per_batch=2048, train_pi_iters=10, train_v_iters=10, 
-                 pi_lr=3e-4, vf_lr=1e-3, gamma=0.99, lam=0.97, clip_ratio=0.2, device="cpu"):
+    def __init__(self, env, timesteps_per_batch=1024, train_pi_iters=2, train_v_iters=2, 
+                 lr=1e-3, gamma=0.99, lam=0.97, clip_ratio=0.2, device="cpu"):
         self.env = env
         obs_dim = env.observation_space.shape
         act_dim = env.action_space.n
@@ -26,8 +26,7 @@ class Trainer:
         self.timesteps_per_batch = timesteps_per_batch
         self.train_pi_iters = train_pi_iters
         self.train_v_iters = train_v_iters
-        self.pi_lr = pi_lr
-        self.vf_lr = vf_lr
+        self.lr = lr
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
@@ -35,8 +34,7 @@ class Trainer:
         self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch)
 
         self.model = Model(self.obs_dim, self.act_dim)
-        self.pi_optimizer = Adam(self.model.pi.parameters(), lr=self.pi_lr)
-        self.vf_optimizer = Adam(self.model.vf.parameters(), lr=self.vf_lr)
+        self.optimizer = Adam(self.model.parameters(), lr=self.lr)
 
     def train_one_epoch(self):
 
@@ -91,48 +89,38 @@ class Trainer:
 
         data = self.buffer.get()
 
-        pi_loss_old = self.get_pi_loss(data).item()
-        v_loss_old = self.get_vf_loss(data).item()
+        loss_old = self.get_loss(data).item()
 
         for i in tqdm(range(self.train_pi_iters), leave=False):
-            self.pi_optimizer.zero_grad()
-            pi_loss = self.get_pi_loss(data)
-            pi_loss.backward()
-            self.pi_optimizer.step()
-
-        for i in tqdm(range(self.train_v_iters), leave=False):
-            self.vf_optimizer.zero_grad()
-            vf_loss = self.get_vf_loss(data)
-            vf_loss.backward()
-            self.vf_optimizer.step()
+            self.optimizer.zero_grad()
+            loss = self.get_loss(data)
+            loss.backward()
+            self.optimizer.step()
 
         training_time = time.time() - start
 
         self.epoch += 1
 
-        return pi_loss_old, v_loss_old, ep_lens, ep_rets, selfplay_time, training_time
+        return loss_old, ep_lens, ep_rets, selfplay_time, training_time
 
 
-    def get_pi_loss(self, data):
-        obs, act, adv, logp_old = data['obs'], data['act'], data['adv'], data['logp']
+    def get_loss(self, data):
+        obs, act, adv, ret, logp_old = data['obs'], data['act'], data['adv'], data['ret'], data['logp']
 
-        pi = self.model.actor_dist(obs)
-        logp = pi.log_prob(act)
+        logp, val = self.model.chicken_nugget(obs, act)
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-
-        return loss_pi
     
-    def get_vf_loss(self, data):
-        obs, ret = data['obs'], data['ret']
-        return ((self.model.critic(obs) - ret)**2).mean()
+        loss_vf = ((val - ret)**2).mean()
+
+        loss = loss_pi + loss_vf
+        return loss
 
     def save_state(self):
         torch.save({
             "model": self.model.state_dict(),
-            "pi_optimizer": self.pi_optimizer.state_dict(),
-            "vf_optimizer": self.vf_optimizer.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
             "epoch": self.epoch,
         }, f"./results/weights/{self.epoch}.pt")
 
@@ -140,8 +128,7 @@ class Trainer:
         checkpoint = torch.load(f"./results/weights/{e}.pt")
 
         self.model.load_state_dict(checkpoint["model"])
-        self.pi_optimizer.load_state_dict(checkpoint["pi_optimizer"])
-        self.vf_optimizer.load_state_dict(checkpoint["vf_optimizer"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.epoch = checkpoint["epoch"]
 
     def np_to_device(self, arr):
