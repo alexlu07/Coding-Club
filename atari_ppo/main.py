@@ -7,6 +7,9 @@ env = gym.make("ALE/Breakout-v5")
 
 trainer = Trainer(env)
 
+save = True
+load = False
+
 # with open("./results/log.txt", "r+") as f:
 #     if load:
 #         epoch = int(f.readlines()[-1].split()[0][:-1])

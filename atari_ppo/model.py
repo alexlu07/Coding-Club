@@ -5,25 +5,30 @@ import numpy as np
 from torch.distributions.categorical import Categorical
 
 class Model(nn.Module):
-    def __init__(self, obs_dim, act_dim):
+    def __init__(self, obs_dim, act_dim, sample_obs):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-
-        self.pi = nn.Sequential(
-            nn.Conv2d(128, 4,  1),
+        self.conv = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.ReLU(),
             nn.Flatten(-3),
-            nn.Linear(4*obs_dim[1]*obs_dim[2], act_dim[0])
+        )
+
+        sample_obs = np.moveaxis(sample_obs, 2, 0)
+
+        n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
+        self.linear = nn.Linear(n_flatten, 512)
+
+        self.pi = nn.Sequential(
+            nn.Linear(512, act_dim[0])
         )
 
         self.vf = nn.Sequential(
-            nn.Conv2d(128, 2, 1),
-            nn.ReLU(),
-            nn.Flatten(-3),
-            mlp(2*obs_dim[1]*obs_dim[2], [64], 1)
+            nn.Linear(512, 1)
         )
 
     def step(self, obs):
@@ -49,9 +54,8 @@ class Model(nn.Module):
         return self.vf(self.initial_passthrough(obs))
 
     def initial_passthrough(self, obs):
-        x = F.relu(self.conv1(obs))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = self.conv(obs)
+        x = F.relu(self.linear(x))
 
         return x
 

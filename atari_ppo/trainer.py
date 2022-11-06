@@ -34,7 +34,7 @@ class Trainer:
 
         self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch)
 
-        self.model = Model(self.obs_dim, self.act_dim)
+        self.model = Model(self.obs_dim, self.act_dim, self.env.observation_space.sample())
         self.pi_optimizer = Adam(self.model.pi.parameters(), lr=self.pi_lr)
         self.vf_optimizer = Adam(self.model.vf.parameters(), lr=self.vf_lr)
 
@@ -84,8 +84,7 @@ class Trainer:
                 next_obs = np.moveaxis(next_obs, 2, 0)
                 obs = next_obs
 
-
-
+    
         selfplay_time = time.time() - start
         start = time.time()
 
@@ -121,6 +120,13 @@ class Trainer:
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+
+        # print(logp[-20:])
+        # print(ratio[-20:])
+        # print(clip_adv[-20:])
+        # print(torch.min(ratio * adv, clip_adv)[-20:])
+        # print(-(torch.min(ratio * adv, clip_adv)[-20:]).mean())
+        # print(loss_pi)
 
         return loss_pi
     
