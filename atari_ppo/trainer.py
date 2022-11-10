@@ -10,8 +10,9 @@ from buffer import Buffer
 from model import Model
 
 class Trainer:
-    def __init__(self, env, timesteps_per_batch=1024, train_pi_iters=2, train_v_iters=2, 
-                 lr=1e-3, gamma=0.99, lam=0.97, clip_ratio=0.2, device="cpu"):
+    def __init__(self, env, timesteps_per_batch=2028, train_pi_iters=2, train_v_iters=2, 
+                 lr=1e-3, gamma=0.99, lam=0.97, clip_ratio=0.2, rollout_device="cpu", 
+                 train_device="cuda", epsilon=0.25):
         self.env = env
         obs_dim = env.observation_space.shape
         act_dim = env.action_space.n
@@ -19,7 +20,8 @@ class Trainer:
         self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
         self.act_dim = (act_dim,)
 
-        self.device = device
+        self.rollout_device = rollout_device
+        self.train_device = train_device
 
         self.epoch = 0
 
@@ -30,10 +32,11 @@ class Trainer:
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
+        self.epsilon = epsilon
 
         self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch)
 
-        self.model = Model(self.obs_dim, self.act_dim)
+        self.model = Model(self.obs_dim, self.act_dim, env.observation_space.sample())
         self.optimizer = Adam(self.model.parameters(), lr=self.lr)
 
     def train_one_epoch(self):
@@ -46,17 +49,19 @@ class Trainer:
 
         start = time.time()
 
-        obs = self.env.reset()
+        self.model.to(self.rollout_device)
+
+        obs = self.env.reset()[0]
         obs = np.moveaxis(obs, 2, 0)
 
         with torch.no_grad():
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
                 
-                obs_tensor = self.np_to_device(obs)
+                obs_tensor = self.np_to_device(obs, self.rollout_device)
 
-                act, val, logp = self.model.step(obs_tensor)
+                act, val, logp = self.model.step(obs_tensor, self.epsilon)
 
-                next_obs, rew, done, _ = self.env.step(act)
+                next_obs, rew, done, truncated, _ = self.env.step(act)
                 
                 self.buffer.store(obs, act, rew, val, logp)
 
@@ -76,7 +81,7 @@ class Trainer:
                     done = False
 
                 elif step == self.timesteps_per_batch-1:
-                    val = self.model.critic(self.np_to_device(obs))
+                    val = self.model.critic(self.np_to_device(obs, self.rollout_device))
                     self.buffer.finish_path(val.numpy())
             
                 next_obs = np.moveaxis(next_obs, 2, 0)
@@ -86,9 +91,11 @@ class Trainer:
         selfplay_time = time.time() - start
         start = time.time()
 
-        data = self.buffer.get()
+        self.model.to(self.train_device)
 
-        loss_old = self.get_loss(data).item()
+        data = self.buffer.get(self.train_device)
+
+        loss_old = self.get_loss(data).cpu().item()
 
         for i in tqdm(range(self.train_pi_iters), leave=False):
             self.optimizer.zero_grad()
@@ -130,5 +137,5 @@ class Trainer:
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.epoch = checkpoint["epoch"]
 
-    def np_to_device(self, arr):
-        return torch.as_tensor(arr, dtype=torch.float32).to(self.device)
+    def np_to_device(self, arr, device):
+        return torch.as_tensor(arr, dtype=torch.float32).to(device)

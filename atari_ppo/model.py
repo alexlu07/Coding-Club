@@ -2,11 +2,14 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+import random
 from torch.distributions.categorical import Categorical
 
 class Model(nn.Module):
     def __init__(self, obs_dim, act_dim, sample_obs):
         super().__init__()
+    
+        self.act_dim = act_dim
 
         self.conv = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
@@ -31,15 +34,15 @@ class Model(nn.Module):
             nn.Linear(512, 1)
         )
 
-    def step(self, obs):
+    def step(self, obs, epsilon=0):
         with torch.no_grad():
             obs = self.initial_passthrough(obs)
             pi = self.pi_dist(obs)
-            a = pi.sample()
+            a = torch.randint(self.act_dim[0], ()) if random.random() < epsilon else pi.sample() 
             logp_a = pi.log_prob(a)
             v = self.vf(obs)
 
-        return a.numpy(), v.numpy(), logp_a.numpy()
+        return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
 
     def pi_dist(self, obs):
         dist = self.pi(obs)
