@@ -10,14 +10,15 @@ from buffer import Buffer
 from model import Model
 
 class Trainer:
-    def __init__(self, env, timesteps_per_batch=2028, train_pi_iters=2, train_v_iters=2, 
-                 lr=1e-3, gamma=0.99, lam=0.97, clip_ratio=0.2, rollout_device="cpu", 
-                 train_device="cuda", epsilon=0.25):
+    def __init__(self, env, timesteps_per_batch=2048, n_steps=5, lr=1e-4,
+                 gamma=0.99, lam=0.97, clip_ratio=0.2, rollout_device="cpu", 
+                 train_device="cuda", temp=0.8):
         self.env = env
         obs_dim = env.observation_space.shape
         act_dim = env.action_space.n
 
-        self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
+        # self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
+        self.obs_dim = (4,)
         self.act_dim = (act_dim,)
 
         self.rollout_device = rollout_device
@@ -26,13 +27,12 @@ class Trainer:
         self.epoch = 0
 
         self.timesteps_per_batch = timesteps_per_batch
-        self.train_pi_iters = train_pi_iters
-        self.train_v_iters = train_v_iters
+        self.n_steps = n_steps
         self.lr = lr
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
-        self.epsilon = epsilon
+        self.temp = temp
 
         self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch)
 
@@ -52,14 +52,14 @@ class Trainer:
         self.model.to(self.rollout_device)
 
         obs = self.env.reset()[0]
-        obs = np.moveaxis(obs, 2, 0)
+        # obs = np.moveaxis(obs, 2, 0)
 
         with torch.no_grad():
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
                 
                 obs_tensor = self.np_to_device(obs, self.rollout_device)
 
-                act, val, logp = self.model.step(obs_tensor, self.epsilon)
+                act, val, logp = self.model.step(obs_tensor, self.temp)
 
                 next_obs, rew, done, truncated, _ = self.env.step(act)
                 
@@ -84,7 +84,7 @@ class Trainer:
                     val = self.model.critic(self.np_to_device(obs, self.rollout_device))
                     self.buffer.finish_path(val.numpy())
             
-                next_obs = np.moveaxis(next_obs, 2, 0)
+                # next_obs = np.moveaxis(next_obs, 2, 0)
                 obs = next_obs
 
     
@@ -97,7 +97,7 @@ class Trainer:
 
         loss_old = self.get_loss(data).cpu().item()
 
-        for i in tqdm(range(self.train_pi_iters), leave=False):
+        for i in tqdm(range(self.n_steps), leave=False):
             self.optimizer.zero_grad()
             loss = self.get_loss(data)
             loss.backward()
@@ -123,15 +123,15 @@ class Trainer:
         loss = loss_pi + loss_vf
         return loss
 
-    def save_state(self):
+    def save_state(self, name):
         torch.save({
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "epoch": self.epoch,
-        }, f"./results/weights/{self.epoch}.pt")
+        }, f"./weights/{name}.pt")
 
-    def load_state(self, e):
-        checkpoint = torch.load(f"./results/weights/{e}.pt")
+    def load_state(self, name):
+        checkpoint = torch.load(f"./weights/{name}.pt")
 
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])

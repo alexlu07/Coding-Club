@@ -11,17 +11,27 @@ class Model(nn.Module):
     
         self.act_dim = act_dim
 
+        # self.conv = nn.Sequential(
+        #     nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+        #     nn.ReLU(),
+        #     nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+        #     nn.ReLU(),
+        #     nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+        #     nn.ReLU(),
+        #     nn.Flatten(-3),
+        # )
+
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+            nn.Linear(4, 128),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.Linear(128, 256),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Flatten(-3),
+
         )
 
-        sample_obs = np.moveaxis(sample_obs, 2, 0)
+        # sample_obs = np.moveaxis(sample_obs, 2, 0)
 
         n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
         self.linear = nn.Linear(n_flatten, 512)
@@ -34,19 +44,20 @@ class Model(nn.Module):
             nn.Linear(512, 1)
         )
 
-    def step(self, obs, epsilon=0):
+    def step(self, obs, temp=1.0):
         with torch.no_grad():
             obs = self.initial_passthrough(obs)
-            pi = self.pi_dist(obs)
-            a = torch.randint(self.act_dim[0], ()) if random.random() < epsilon else pi.sample() 
+            pi = self.pi_dist(obs, temp)
+            a = pi.sample() 
             logp_a = pi.log_prob(a)
             v = self.vf(obs)
 
         return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
 
-    def pi_dist(self, obs):
+    def pi_dist(self, obs, temp):
         dist = self.pi(obs)
-        return Categorical(logits=dist)
+        dist = (dist / temp).softmax(dim=-1)
+        return Categorical(probs=dist)
 
     def chicken_nugget(self, obs, act):
         obs = self.initial_passthrough(obs)
