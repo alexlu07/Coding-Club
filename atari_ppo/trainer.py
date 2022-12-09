@@ -1,6 +1,7 @@
 from random import gammavariate
 import torch
 from torch.optim import Adam
+import torch.nn.functional as F
 import numpy as np
 import scipy
 import time
@@ -10,8 +11,8 @@ from buffer import Buffer
 from model import Model
 
 class Trainer:
-    def __init__(self, env, timesteps_per_batch=2048, n_steps=5, lr=1e-4,
-                 gamma=0.99, lam=0.97, clip_ratio=0.2, rollout_device="cpu", 
+    def __init__(self, env, timesteps_per_batch=2048, minibatch_size=64, lr=3e-4, vf_coef=0.5,
+                 n_steps = 10, gamma=0.99, lam=0.95, clip_ratio=0.2, rollout_device="cpu", 
                  train_device="cuda", temp=0.8):
         self.env = env
         obs_dim = env.observation_space.shape
@@ -27,14 +28,16 @@ class Trainer:
         self.epoch = 0
 
         self.timesteps_per_batch = timesteps_per_batch
-        self.n_steps = n_steps
+        self.minibatch_size = minibatch_size
         self.lr = lr
+        self.vf_coef = vf_coef
+        self.n_steps = n_steps
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
         self.temp = temp
 
-        self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch)
+        self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch, self.minibatch_size)
 
         self.model = Model(self.obs_dim, self.act_dim, env.observation_space.sample())
         self.optimizer = Adam(self.model.parameters(), lr=self.lr)
@@ -58,23 +61,28 @@ class Trainer:
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
                 
                 obs_tensor = self.np_to_device(obs, self.rollout_device)
-
                 act, val, logp = self.model.step(obs_tensor, self.temp)
 
-                next_obs, rew, done, truncated, _ = self.env.step(act)
+                next_obs, rew, terminated, truncated, _ = self.env.step(act)
+                done = terminated + truncated
                 
                 self.buffer.store(obs, act, rew, val, logp)
 
                 ep_len += 1
                 ep_ret += rew
 
-                if done:
+
+                # next_obs = np.moveaxis(next_obs, 2, 0)
+                obs = next_obs
+                if truncated:
                     ep_lens.append(ep_len)
                     ep_rets.append(ep_ret)
                     
                     self.buffer.finish_path(0)
 
-                    obs = self.env.reset()
+                    obs = self.env.reset()[0]
+                    # obs = np.moveaxis(obs, 2, 0)
+
                     ep_len = 0
                     ep_ret = 0
 
@@ -83,31 +91,28 @@ class Trainer:
                 elif step == self.timesteps_per_batch-1:
                     val = self.model.critic(self.np_to_device(obs, self.rollout_device))
                     self.buffer.finish_path(val.numpy())
-            
-                # next_obs = np.moveaxis(next_obs, 2, 0)
-                obs = next_obs
-
     
         selfplay_time = time.time() - start
         start = time.time()
 
         self.model.to(self.train_device)
 
-        data = self.buffer.get(self.train_device)
+        batched_data = self.buffer.get(self.train_device)
 
-        loss_old = self.get_loss(data).cpu().item()
+        for _ in range(self.n_steps):
+            for data in tqdm(batched_data, leave=False):
+                self.optimizer.zero_grad()
+                loss = self.get_loss(data)[0]   
+                loss.backward()
+                self.optimizer.step()
 
-        for i in tqdm(range(self.n_steps), leave=False):
-            self.optimizer.zero_grad()
-            loss = self.get_loss(data)
-            loss.backward()
-            self.optimizer.step()
+        loss_old, loss_pi, loss_vf = [i.cpu().item() for i in self.get_loss(data)]
 
         training_time = time.time() - start
 
         self.epoch += 1
 
-        return loss_old, ep_lens, ep_rets, selfplay_time, training_time
+        return loss_pi, loss_vf, ep_lens, ep_rets, selfplay_time, training_time
 
 
     def get_loss(self, data):
@@ -117,11 +122,13 @@ class Trainer:
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-    
-        loss_vf = ((val - ret)**2).mean()
 
-        loss = loss_pi + loss_vf
-        return loss
+        print(ret, val)
+    
+        loss_vf = F.mse_loss(ret, val)
+
+        loss = loss_pi + self.vf_coef * loss_vf
+        return loss, loss_pi, loss_vf
 
     def save_state(self, name):
         torch.save({

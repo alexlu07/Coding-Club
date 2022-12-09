@@ -21,28 +21,23 @@ class Model(nn.Module):
         #     nn.Flatten(-3),
         # )
 
-        self.conv = nn.Sequential(
-            nn.Linear(4, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
+        # self.conv = nn.Sequential(
+        #     # nn.Linear(4, 256),
+        #     # nn.ReLU(),
 
-        )
+        # )
+
+        self.conv = nn.Identity()
 
         # sample_obs = np.moveaxis(sample_obs, 2, 0)
 
-        n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
-        self.linear = nn.Linear(n_flatten, 512)
+        # n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
+        # self.linear = nn.Linear(n_flatten, 512)
+        self.linear = nn.Identity()
 
-        self.pi = nn.Sequential(
-            nn.Linear(512, act_dim[0])
-        )
+        self.pi = mlp(4, [64, 64], act_dim[0], activation=nn.Tanh)
 
-        self.vf = nn.Sequential(
-            nn.Linear(512, 1)
-        )
+        self.vf = mlp(4, [64, 64], 1, activation=nn.Tanh)
 
     def step(self, obs, temp=1.0):
         with torch.no_grad():
