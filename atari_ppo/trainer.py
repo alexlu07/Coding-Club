@@ -59,26 +59,25 @@ class Trainer:
 
         with torch.no_grad():
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
-                
                 obs_tensor = self.np_to_device(obs, self.rollout_device)
                 act, val, logp = self.model.step(obs_tensor, self.temp)
 
                 next_obs, rew, terminated, truncated, _ = self.env.step(act)
                 done = terminated + truncated
-                
+
                 self.buffer.store(obs, act, rew, val, logp)
 
                 ep_len += 1
                 ep_ret += rew
 
-
                 # next_obs = np.moveaxis(next_obs, 2, 0)
                 obs = next_obs
-                if truncated:
+                if done:
                     ep_lens.append(ep_len)
                     ep_rets.append(ep_ret)
                     
-                    self.buffer.finish_path(0)
+                    val = self.model.critic(self.np_to_device(obs, self.rollout_device)) if truncated else 0
+                    self.buffer.finish_path(val)
 
                     obs = self.env.reset()[0]
                     # obs = np.moveaxis(obs, 2, 0)
@@ -98,6 +97,9 @@ class Trainer:
         self.model.to(self.train_device)
 
         batched_data = self.buffer.get(self.train_device)
+        print(self.buffer.ret_buf[:50])
+        print(self.buffer.val_buf[:50])
+
 
         for _ in range(self.n_steps):
             for data in tqdm(batched_data, leave=False):
@@ -123,7 +125,7 @@ class Trainer:
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
 
-        print(ret, val)
+        # print(ret, val)
     
         loss_vf = F.mse_loss(ret, val)
 

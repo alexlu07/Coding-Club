@@ -9,35 +9,14 @@ class Model(nn.Module):
     def __init__(self, obs_dim, act_dim, sample_obs):
         super().__init__()
     
+        self.obs_dim = obs_dim
         self.act_dim = act_dim
+        
+        self.make_networks(sample_obs)
 
-        # self.conv = nn.Sequential(
-        #     nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
-        #     nn.ReLU(),
-        #     nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
-        #     nn.ReLU(),
-        #     nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
-        #     nn.ReLU(),
-        #     nn.Flatten(-3),
-        # )
-
-        # self.conv = nn.Sequential(
-        #     # nn.Linear(4, 256),
-        #     # nn.ReLU(),
-
-        # )
-
-        self.conv = nn.Identity()
-
-        # sample_obs = np.moveaxis(sample_obs, 2, 0)
-
-        # n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
-        # self.linear = nn.Linear(n_flatten, 512)
-        self.linear = nn.Identity()
-
-        self.pi = mlp(4, [64, 64], act_dim[0], activation=nn.Tanh)
-
-        self.vf = mlp(4, [64, 64], 1, activation=nn.Tanh)
+    def make_networks(self, sample_obs):
+        self.pi = mlp(self.obs_dim[0], [64, 64], self.act_dim[0], activation=nn.ReLU)
+        self.vf = mlp(self.obs_dim[0], [64, 64], 1, activation=nn.ReLU)
 
     def step(self, obs, temp=1.0):
         with torch.no_grad():
@@ -62,19 +41,40 @@ class Model(nn.Module):
         logp = pi_dist.log_prob(act)
         values = self.vf(obs)
 
-        return logp, values
-
+        return logp, values.squeeze()
+        
     def critic(self, obs):
         return self.vf(self.initial_passthrough(obs))
+
+    def initial_passthrough(self, obs):
+        return obs
+
+class ConvModel(Model):
+    def make_networks(self, sample_obs):
+        self.conv = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            nn.Flatten(-3),
+        )
+
+        sample_obs = np.moveaxis(sample_obs, 2, 0)
+
+        n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
+        self.linear = nn.Linear(n_flatten, 512)
+
+        self.pi = mlp(512, [64, 64], self.act_dim[0], activation=nn.ReLU)
+
+        self.vf = mlp(512, [64, 64], 1, activation=nn.ReLU)
 
     def initial_passthrough(self, obs):
         x = self.conv(obs)
         x = F.relu(self.linear(x))
 
-        return x
-
-
-
+        return x        
 
 def mlp(
     input_size,
