@@ -8,18 +8,18 @@ import time
 from tqdm import tqdm
 
 from buffer import Buffer
-from model import Model
+from model import Model, ConvModel
 
 class Trainer:
-    def __init__(self, env, timesteps_per_batch=2048, minibatch_size=64, lr=3e-4, vf_coef=0.5,
-                 n_steps = 10, gamma=0.99, lam=0.95, clip_ratio=0.2, rollout_device="cpu", 
-                 train_device="cuda", temp=0.8):
+    def __init__(self, env, timesteps_per_batch=2048, minibatch_size=512, lr=3e-4, vf_coef=1,
+                 n_steps = 3, gamma=0.99, lam=0.95, clip_ratio=0.2, rollout_device="cpu", 
+                 train_device="cuda", temp=1):
         self.env = env
         obs_dim = env.observation_space.shape
         act_dim = env.action_space.n
 
-        # self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
-        self.obs_dim = (4,)
+        self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
+        # self.obs_dim = (4,)
         self.act_dim = (act_dim,)
 
         self.rollout_device = rollout_device
@@ -39,7 +39,7 @@ class Trainer:
 
         self.buffer = Buffer(self.obs_dim, self.act_dim, self.timesteps_per_batch, self.minibatch_size)
 
-        self.model = Model(self.obs_dim, self.act_dim, env.observation_space.sample())
+        self.model = ConvModel(self.obs_dim, self.act_dim, env.observation_space.sample())
         self.optimizer = Adam(self.model.parameters(), lr=self.lr)
 
     def train_one_epoch(self):
@@ -55,7 +55,7 @@ class Trainer:
         self.model.to(self.rollout_device)
 
         obs = self.env.reset()[0]
-        # obs = np.moveaxis(obs, 2, 0)
+        obs = np.moveaxis(obs, 2, 0)
 
         with torch.no_grad():
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
@@ -70,7 +70,7 @@ class Trainer:
                 ep_len += 1
                 ep_ret += rew
 
-                # next_obs = np.moveaxis(next_obs, 2, 0)
+                next_obs = np.moveaxis(next_obs, 2, 0)
                 obs = next_obs
                 if done:
                     ep_lens.append(ep_len)
@@ -80,7 +80,7 @@ class Trainer:
                     self.buffer.finish_path(val)
 
                     obs = self.env.reset()[0]
-                    # obs = np.moveaxis(obs, 2, 0)
+                    obs = np.moveaxis(obs, 2, 0)
 
                     ep_len = 0
                     ep_ret = 0
@@ -97,9 +97,6 @@ class Trainer:
         self.model.to(self.train_device)
 
         batched_data = self.buffer.get(self.train_device)
-        print(self.buffer.ret_buf[:50])
-        print(self.buffer.val_buf[:50])
-
 
         for _ in range(self.n_steps):
             for data in tqdm(batched_data, leave=False):
@@ -124,8 +121,6 @@ class Trainer:
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-
-        # print(ret, val)
     
         loss_vf = F.mse_loss(ret, val)
 
