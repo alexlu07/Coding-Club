@@ -41,7 +41,7 @@ class Model(nn.Module):
         logp = pi_dist.log_prob(act)
         values = self.vf(obs)
 
-        return logp, values.squeeze()
+        return logp, values.squeeze(), pi_dist.entropy()
         
     def critic(self, obs):
         return self.vf(self.initial_passthrough(obs))
@@ -52,7 +52,7 @@ class Model(nn.Module):
 class ConvModel(Model):
     def make_networks(self, sample_obs):
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0),
+            nn.Conv2d(4, 32, kernel_size=8, stride=4, padding=0),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
             nn.ReLU(),
@@ -61,7 +61,7 @@ class ConvModel(Model):
             nn.Flatten(-3),
         )
 
-        sample_obs = np.moveaxis(sample_obs, 2, 0)
+        # sample_obs = np.moveaxis(sample_obs, 2, 0)
 
         n_flatten = self.conv(torch.as_tensor(sample_obs, dtype=torch.float32)).shape[0]
         self.linear = nn.Linear(n_flatten, 512)

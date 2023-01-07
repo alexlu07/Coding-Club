@@ -12,14 +12,16 @@ from model import Model, ConvModel
 
 class Trainer:
     def __init__(self, env, timesteps_per_batch=2048, minibatch_size=512, lr=3e-4, vf_coef=1,
-                 n_steps = 3, gamma=0.99, lam=0.95, clip_ratio=0.2, rollout_device="cpu", 
+                 n_steps = 3, gamma=0.98, lam=0.75, clip_ratio=0.2, rollout_device="cpu", 
                  train_device="cuda", temp=1):
         self.env = env
         obs_dim = env.observation_space.shape
         act_dim = env.action_space.n
 
-        self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
+        # self.obs_dim = (obs_dim[2], obs_dim[0], obs_dim[1])
+        self.obs_dim = obs_dim
         # self.obs_dim = (4,)
+
         self.act_dim = (act_dim,)
 
         self.rollout_device = rollout_device
@@ -54,15 +56,21 @@ class Trainer:
 
         self.model.to(self.rollout_device)
 
-        obs = self.env.reset()[0]
-        obs = np.moveaxis(obs, 2, 0)
+        obs, info = self.env.reset()
+        obs = np.array(obs)
+        # obs = np.moveaxis(obs, 2, 0)
+
+        # lives = info["lives"]
 
         with torch.no_grad():
             for step in tqdm(range(self.timesteps_per_batch), leave=False):
                 obs_tensor = self.np_to_device(obs, self.rollout_device)
                 act, val, logp = self.model.step(obs_tensor, self.temp)
 
-                next_obs, rew, terminated, truncated, _ = self.env.step(act)
+                next_obs, rew, terminated, truncated, info = self.env.step(act)
+                # if info["lives"] != lives: rew -= 50 
+                # lives = info["lives"]
+                
                 done = terminated + truncated
 
                 self.buffer.store(obs, act, rew, val, logp)
@@ -70,7 +78,8 @@ class Trainer:
                 ep_len += 1
                 ep_ret += rew
 
-                next_obs = np.moveaxis(next_obs, 2, 0)
+                # next_obs = np.moveaxis(next_obs, 2, 0)
+                next_obs = np.array(next_obs)
                 obs = next_obs
                 if done:
                     ep_lens.append(ep_len)
@@ -79,17 +88,21 @@ class Trainer:
                     val = self.model.critic(self.np_to_device(obs, self.rollout_device)) if truncated else 0
                     self.buffer.finish_path(val)
 
-                    obs = self.env.reset()[0]
-                    obs = np.moveaxis(obs, 2, 0)
+                    obs, info = self.env.reset()
+                    # obs = np.moveaxis(obs, 2, 0)
+                    obs = np.array(obs)
 
                     ep_len = 0
                     ep_ret = 0
+
+                    # lives = info["lives"]
 
                     done = False
 
                 elif step == self.timesteps_per_batch-1:
                     val = self.model.critic(self.np_to_device(obs, self.rollout_device))
-                    self.buffer.finish_path(val.numpy())
+                    self.buffer.finish_path(val.cpu().numpy())
+                
     
         selfplay_time = time.time() - start
         start = time.time()
@@ -117,14 +130,14 @@ class Trainer:
     def get_loss(self, data):
         obs, act, adv, ret, logp_old = data['obs'], data['act'], data['adv'], data['ret'], data['logp']
 
-        logp, val = self.model.chicken_nugget(obs, act)
+        logp, val, entropy = self.model.chicken_nugget(obs, act)
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-self.clip_ratio, 1+self.clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
     
         loss_vf = F.mse_loss(ret, val)
 
-        loss = loss_pi + self.vf_coef * loss_vf
+        loss = loss_pi + self.vf_coef * loss_vf + 0.05 * entropy.mean()
         return loss, loss_pi, loss_vf
 
     def save_state(self, name):
@@ -138,7 +151,7 @@ class Trainer:
         checkpoint = torch.load(f"./weights/{name}.pt")
 
         self.model.load_state_dict(checkpoint["model"])
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        # self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.epoch = checkpoint["epoch"]
 
     def np_to_device(self, arr, device):

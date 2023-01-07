@@ -59,8 +59,8 @@ class Buffer:
         self.adv_buf[path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
         
         # the next line computes rewards-to-go, to be targets for the value function
-        self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
-        # self.ret_buf[path_slice] = self.adv_buf[path_slice] + self.val_buf[path_slice]
+        # self.ret_buf[path_slice] = discount_cumsum(rews, self.gamma)[:-1]
+        self.ret_buf[path_slice] = self.adv_buf[path_slice] + self.val_buf[path_slice]
         # print(deltas[-10:])
         # print(self.adv_buf[path_slice][-10:])
         # print(self.val_buf[path_slice][-10:])

@@ -1,5 +1,6 @@
 import time
 import gymnasium as gym
+from gymnasium.wrappers import *
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import time
@@ -8,12 +9,14 @@ from trainer import Trainer
 
 writer = SummaryWriter(f"./tb_log/log")
 
-env = gym.make("ALE/SpaceInvaders-v5")
+env = gym.make("ALE/SpaceInvaders-v5", frameskip=1)
+env = TimeLimit(FrameStack(AtariPreprocessing(env, frame_skip=2, grayscale_newaxis=False, terminal_on_life_loss=True), 4), max_episode_steps=2000)
 # env = gym.make("CartPole-v1")
 
-trainer = Trainer(env, temp=1.0, train_device="cpu")
+trainer = Trainer(env, temp=2.0, rollout_device="cuda", train_device="cuda")
 
-for i in range(1000):
+i = 0
+while True:
     start = time.time()
     loss_pi, loss_vf, ep_lens, ep_rets, rollout_time, training_time = trainer.train_one_epoch()
 
@@ -27,23 +30,8 @@ for i in range(1000):
     writer.add_scalar("loss_pi", loss_pi, i)
     writer.add_scalar("loss_vf", loss_vf, i)
     
-trainer.model.to("cpu")
-trainer.temp = 1.0
+    if i % 100 == 0 and i > 0:
+        trainer.model.to("cpu")
+        trainer.save_state(f"ent{i}")
 
-env = gym.make("ALE/SpaceInvaders-v5", render_mode="human")
-
-obs = env.reset()[0]
-while True:
-    obs = np.moveaxis(obs, 2, 0)
-    obs = trainer.np_to_device(obs, 'cpu')
-
-    action = trainer.model.step(obs)[0]
-    obs, rewards, dones, truncated, info = env.step(action)
-
-    env.render()
-    if dones:
-        print("done")
-        break
-    if truncated:
-        print("truncated")
-        break
+    i += 1
