@@ -13,9 +13,12 @@ env = gym.make("ALE/SpaceInvaders-v5", frameskip=1)
 env = TimeLimit(FrameStack(AtariPreprocessing(env, frame_skip=2, grayscale_newaxis=False, terminal_on_life_loss=True), 4), max_episode_steps=2000)
 # env = gym.make("CartPole-v1")
 
-trainer = Trainer(env, temp=2.0, rollout_device="cuda", train_device="cuda")
+trainer = Trainer(env, temp=1.5, rollout_device="cuda", train_device="cuda")
+trainer.model.to("cuda")
+trainer.load_state("1.5temp153300")
 
-i = 0
+
+i = 153301
 while True:
     start = time.time()
     loss_pi, loss_vf, ep_lens, ep_rets, rollout_time, training_time = trainer.train_one_epoch()
@@ -32,6 +35,6 @@ while True:
     
     if i % 100 == 0 and i > 0:
         trainer.model.to("cpu")
-        trainer.save_state(f"ent{i}")
+        trainer.save_state(f"1.5temp{i}")
 
     i += 1

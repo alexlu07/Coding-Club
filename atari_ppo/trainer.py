@@ -85,7 +85,7 @@ class Trainer:
                     ep_lens.append(ep_len)
                     ep_rets.append(ep_ret)
                     
-                    val = self.model.critic(self.np_to_device(obs, self.rollout_device)) if truncated else 0
+                    val = self.model.critic(self.np_to_device(obs, self.rollout_device)).cpu().numpy() if truncated else 0
                     self.buffer.finish_path(val)
 
                     obs, info = self.env.reset()
@@ -137,7 +137,7 @@ class Trainer:
     
         loss_vf = F.mse_loss(ret, val)
 
-        loss = loss_pi + self.vf_coef * loss_vf + 0.05 * entropy.mean()
+        loss = loss_pi + self.vf_coef * loss_vf + 0.01 * entropy.mean()
         return loss, loss_pi, loss_vf
 
     def save_state(self, name):
@@ -151,7 +151,7 @@ class Trainer:
         checkpoint = torch.load(f"./weights/{name}.pt")
 
         self.model.load_state_dict(checkpoint["model"])
-        # self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.epoch = checkpoint["epoch"]
 
     def np_to_device(self, arr, device):
